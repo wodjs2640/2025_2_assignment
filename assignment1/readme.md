@@ -146,7 +146,7 @@ Create the source code for your state transition diagram. Name it decomment.c.
 Use the gcc800 command to preprocess, compile, assemble, and link your program. Perform each step individually, and examine the intermediate results to the extent possible. Name the intermediate files as decomment.i, decomment.s, decomment.o after preprocessing, compiling, assembling, respectively,
 
 ### Step 4: Execute
-Execute your program multiple times on various input files that test all logical paths through your code. For the test, use the sample files provided here.
+Execute your program multiple times on various input files that test all logical paths through your code. For the test, use the sample files provided here. 
 
 (1) Download all files to your project directory. You will find sampledecomment and 6 test C source files. You need to make sampledecomment executable (by changing file permission) by
 
