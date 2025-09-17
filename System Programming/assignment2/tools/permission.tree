@@ -1,0 +1,10 @@
+#---------------------------------------------------------------------------------------------------
+# System Programming                         I/O Lab                                      Fall 2025
+#
+# before run the example command below, change the permission of 'only_root_can_access_dir' to 000
+# $ chmod 000 anyone_can_access_dir/only_root_can_access_dir
+#
+# example command: dirtree anyone_can_access_dir
+#
+f ./anyone_can_access_dir/anyone_can_access_file 1 0
+f ./anyone_can_access_dir/only_root_can_access_dir/thisfilecannotbetraversed 1 0
