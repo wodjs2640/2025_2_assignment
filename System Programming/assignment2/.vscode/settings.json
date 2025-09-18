@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "types.h": "c",
+        "stat.h": "c",
+        "pwd.h": "c",
+        "grp.h": "c",
+        "errno.h": "c",
+        "dirent.h": "c"
+    }
+}

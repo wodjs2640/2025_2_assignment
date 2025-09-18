@@ -102,8 +102,8 @@ struct dirent *get_next(DIR *dir)
 /// @retval 1  if a>b
 static int dirent_compare(const void *a, const void *b)
 {
-  struct dirent *e1 = (struct dirent *)a;
-  struct dirent *e2 = (struct dirent *)b;
+  struct dirent *e1 = *(struct dirent **)a;
+  struct dirent *e2 = *(struct dirent **)b;
 
   // if one of the entries is a directory, it comes first
   if (e1->d_type != e2->d_type)
@@ -118,17 +118,219 @@ static int dirent_compare(const void *a, const void *b)
   return strcmp(e1->d_name, e2->d_name);
 }
 
+// 패턴 매칭 함수
+int pattern_match(const char *s, const char *p) // s : 파일 이름, p : 패턴
+{
+  // 끝까지 둘 다 도달했으면 성공
+  if (*p == '\0' && *s == '\0')
+    return 1;
+
+  // 패턴 끝났는데 문자열 남으면 실패
+  if (*p == '\0')
+    return 0;
+
+  // 현재 패턴 글자
+  if (*p == '?')
+  {
+    if (pattern_match(s, p + 1))
+      return 1; // ?가 0글자 매칭
+
+    if (*s && pattern_match(s + 1, p))
+      return 1; // ?가 여러 글자 매칭
+
+    if (*s && pattern_match(s + 1, p + 1))
+      return 1; // ?가 1글자 매칭
+
+    return 0;
+  }
+
+  else if (*p == '*')
+  {
+    // 직전 글자/그룹 반복
+    for (int i = 0;; i++)
+    {
+      if (pattern_match(s + i, p + 1))
+        return 1;
+
+      if (s[i] == '\0')
+        break;
+    }
+
+    return 0;
+  }
+
+  else if (*p == '(')
+  {
+    // 그룹 시작
+    const char *end = strchr(p, ')');
+    if (!end)
+      return 0; // 닫는 괄호 없으면 실패
+
+    // 그룹 문자열 추출
+    int glen = end - (p + 1);
+    char group[64];
+    strncpy(group, p + 1, glen);
+    group[glen] = '\0';
+
+    // 그룹 매칭 시도
+    if (strncmp(s, group, glen) == 0)
+      // 그룹 매칭 성공, 남은 패턴 이어서 확인
+      return pattern_match(s + glen, end + 1);
+
+    else
+      return 0;
+  }
+
+  else
+  {
+    // 그냥 글자 비교
+    if (*s == *p)
+    {
+      return pattern_match(s + 1, p + 1);
+    }
+    else
+    {
+      return 0;
+    }
+  }
+}
+
 /// @brief recursively process directory @a dn and print its tree
 ///
 /// @param dn absolute or relative path string
 /// @param pstr prefix string printed in front of each entry
 /// @param stats pointer to statistics
 /// @param flags output control flags (F_*)
-void process_dir(const char *dn, const char *pstr, struct summary *stats, unsigned int flags)
+int process_dir(const char *dn, const char *pstr, struct summary *stats, unsigned int flags, int depth)
 {
-  //
-  // TODO
-  //
+  // 깊이 제한 검사
+  if ((flags & F_DEPTH) && depth > max_depth)
+    return 0;
+
+  DIR *dir;
+  struct dirent *entry;
+  char path[MAX_PATH_LEN];
+  struct stat st;
+
+  dir = opendir(dn);
+
+  if (dir == NULL)
+  {
+    printf("  ERROR: %s\n", strerror(errno)); // 디렉토리 열기 실패 시 출력
+    return 0;
+  }
+
+  struct dirent *list[1024];
+  int count = 0;
+
+  while ((entry = get_next(dir)) != NULL)
+  {
+    list[count] = malloc(sizeof(struct dirent)); // 엔트리 복사
+    memcpy(list[count], entry, sizeof(struct dirent));
+    count++;
+  }
+
+  closedir(dir);
+
+  qsort(list, count, sizeof(struct dirent *), dirent_compare); // 정렬
+
+  int matched_any = 0; // 매칭 여부
+
+  for (int i = 0; i < count; i++)
+  {
+    entry = list[i];
+    snprintf(path, sizeof(path), "%s/%s", dn, entry->d_name);
+
+    if (lstat(path, &st) == -1)
+    {
+      free(entry);
+      continue;
+    }
+
+    if (S_ISDIR(st.st_mode))
+    {
+      // 디렉토리면 재귀 탐색
+      char newprefix[MAX_PATH_LEN];
+      snprintf(newprefix, sizeof(newprefix), "%s  ", pstr);
+
+      int child_match = process_dir(path, newprefix, stats, flags, depth + 1);
+
+      if (child_match)
+      {
+        // 자식 중 매칭 있으면 디렉토리 출력
+        struct passwd *pw = getpwuid(st.st_uid);
+        struct group *gr = getgrgid(st.st_gid);
+        const char *uname = pw ? pw->pw_name : "unknown";
+        const char *gname = gr ? gr->gr_name : "unknown";
+
+        printf("%s%-54s  %8.8s:%-8.8s  %10llu  %8llu    d\n",
+               pstr, entry->d_name,
+               uname, gname,
+               (unsigned long long)st.st_size,
+               (unsigned long long)st.st_blocks);
+
+        stats->dirs++;
+        stats->size += st.st_size;
+        stats->blocks += st.st_blocks;
+
+        matched_any = 1;
+      }
+    }
+    else
+    {
+      int ok = 1;
+      if ((flags & F_Filter) && pattern != NULL)
+      {
+        if (!pattern_match(entry->d_name, pattern)) // 패턴 매칭 검사
+          ok = 0;
+      }
+
+      if (ok)
+      {
+        char typechar = ' ';
+        if (S_ISLNK(st.st_mode))
+        {
+          typechar = 'l';
+          stats->links++;
+        }
+        else if (S_ISFIFO(st.st_mode))
+        {
+          typechar = 'f';
+          stats->fifos++;
+        }
+        else if (S_ISSOCK(st.st_mode))
+        {
+          typechar = 's';
+          stats->socks++;
+        }
+        else
+        {
+          stats->files++;
+        }
+
+        stats->size += st.st_size;
+        stats->blocks += st.st_blocks;
+
+        struct passwd *pw = getpwuid(st.st_uid);
+        struct group *gr = getgrgid(st.st_gid);
+        const char *uname = pw ? pw->pw_name : "unknown";
+        const char *gname = gr ? gr->gr_name : "unknown";
+
+        printf("%s%-54s  %8.8s:%-8.8s  %10llu  %8llu    %c\n",
+               pstr, entry->d_name,
+               uname, gname,
+               (unsigned long long)st.st_size,
+               (unsigned long long)st.st_blocks,
+               typechar);
+
+        matched_any = 1;
+      }
+    }
+
+    free(entry);
+  }
+
+  return matched_any; // 매칭 있으면 1
 }
 
 /// @brief print program syntax and an optional error message. Aborts the program with EXIT_FAILURE
@@ -185,51 +387,57 @@ int main(int argc, char *argv[])
   {
     if (argv[i][0] == '-')
     {
-      // format: "-<flag>"
       if (!strcmp(argv[i], "-d"))
       {
         flags |= F_DEPTH;
+
         if (++i < argc && argv[i][0] != '-')
         {
           max_depth = atoi(argv[i]);
+
           if (max_depth < 1 || max_depth > MAX_DEPTH)
-          {
             syntax(argv[0], "Invalid depth value '%s'. Must be between 1 and %d.", argv[i], MAX_DEPTH);
-          }
         }
+
         else
-        {
           syntax(argv[0], "Missing depth value argument.");
-        }
       }
+
       else if (!strcmp(argv[i], "-f"))
       {
         if (++i < argc && argv[i][0] != '-')
         {
           flags |= F_Filter;
-          pattern = argv[i];
+          pattern = argv[i]; // 필터링 패턴 저장
         }
+
         else
-        {
           syntax(argv[0], "Missing filtering pattern argument.");
-        }
       }
+
       else if (!strcmp(argv[i], "-h"))
         syntax(argv[0], NULL);
+
       else
         syntax(argv[0], "Unrecognized option '%s'.", argv[i]);
     }
     else
     {
-      // anything else is recognized as a directory
       if (ndir < MAX_DIR)
       {
-        directories[ndir++] = argv[i];
+        const char *arg = argv[i];
+        size_t len = strlen(arg);
+
+        // .tree 확장자 그대로 출력 (compare.sh 맞추기 위함)
+        if (len > 5 && strcmp(arg + len - 5, ".tree") == 0)
+          directories[ndir++] = argv[i];
+
+        else
+          directories[ndir++] = argv[i]; // 그냥 디렉토리 이름
       }
+
       else
-      {
         fprintf(stderr, "Warning: maximum number of directories exceeded, ignoring '%s'.\n", argv[i]);
-      }
     }
   }
 
@@ -240,17 +448,49 @@ int main(int argc, char *argv[])
   //
   // process each directory
   //
-  // TODO
-  //
-  // Pseudo-code
-  // - reset statistics (tstat)
-  // - loop over all entries in 'root directories' (number of entires stored in 'ndir')
-  //   - reset statistics (dstat)
-  //   - print header
-  //   - print directory name
-  //   - call process_dir() for the directory
-  //   - print summary & update statistics
-  //...
+  for (int i = 0; i < ndir; i++)
+  {
+    struct summary dstat = {0};
+
+    printf("%s", print_formats[0]);
+    printf("%s", print_formats[1]);
+
+    printf("%s\n", directories[i]); // 디렉토리/트리 이름 출력
+
+    process_dir(directories[i], "  ", &dstat, flags, 0);
+
+    printf("%s", print_formats[1]);
+
+    const char *f_s = (dstat.files == 1) ? "" : "s";
+    const char *d_s = (dstat.dirs == 1) ? "y" : "ies";
+    const char *l_s = (dstat.links == 1) ? "" : "s";
+    const char *p_s = (dstat.fifos == 1) ? "" : "s";
+    const char *s_s = (dstat.socks == 1) ? "" : "s";
+
+    char summary[128];
+    snprintf(summary, sizeof(summary),
+             "%u file%s, %u director%s, %u link%s, %u pipe%s, and %u socket%s",
+             dstat.files, f_s,
+             dstat.dirs, d_s,
+             dstat.links, l_s,
+             dstat.fifos, p_s,
+             dstat.socks, s_s);
+
+    printf("%-68s %14llu %9llu\n",
+           summary,
+           (unsigned long long)dstat.size,
+           (unsigned long long)dstat.blocks);
+
+    printf("\n");
+
+    tstat.files += dstat.files;
+    tstat.dirs += dstat.dirs;
+    tstat.links += dstat.links;
+    tstat.fifos += dstat.fifos;
+    tstat.socks += dstat.socks;
+    tstat.size += dstat.size;
+    tstat.blocks += dstat.blocks;
+  }
 
   //
   // print aggregate statistics if more than one directory was traversed
@@ -266,7 +506,8 @@ int main(int argc, char *argv[])
            "  total # of entries:      %16d\n"
            "  total file size:         %16llu\n"
            "  total # of blocks:       %16llu\n",
-           ndir, tstat.files, tstat.dirs, tstat.links, tstat.fifos, tstat.socks,
+           ndir,
+           tstat.files, tstat.dirs, tstat.links, tstat.fifos, tstat.socks,
            tstat.files + tstat.dirs + tstat.links + tstat.fifos + tstat.socks,
            tstat.size, tstat.blocks);
   }
