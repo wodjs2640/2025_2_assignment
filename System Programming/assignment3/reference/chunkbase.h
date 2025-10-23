@@ -62,9 +62,9 @@ Chunk_T chunk_get_adjacent(Chunk_T c, void *start, void *end);
 /* Debug-only sanity check (compiled only if NDEBUG is not defined). */
 #ifndef NDEBUG
 
-/* chunk_is_sane:
+/* chunk_is_valid:
  * Return 1 iff 'c' lies within [start, end) and has a positive span. */
-int   chunk_is_sane(Chunk_T c, void *start, void *end);
+int   chunk_is_valid(Chunk_T c, void *start, void *end);
 
 #endif
 
