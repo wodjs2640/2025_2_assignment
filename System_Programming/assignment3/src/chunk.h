@@ -6,7 +6,7 @@
 /* and be sure to include it when you submit your assignment.         */
 /*--------------------------------------------------------------------*/
 
-#ifndef _CHUNK_STUB_H_
-#define _CHUNK_STUB_H_
+#ifndef CHUNK_H
+#define CHUNK_H
 
 #endif
