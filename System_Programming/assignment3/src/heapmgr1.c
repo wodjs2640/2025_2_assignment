@@ -1,39 +1,53 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <assert.h>
-#include "heapmgr.h"
+#include "../test/heapmgr.h"
 
+// 블록 정보 구조체
 typedef struct Header
 {
-    size_t size_alloc;
+    size_t size_alloc; // 블록 크기 + 할당여부
 } Header;
 
 typedef Header Footer;
 
+// 빈 블록을 연결할 노드
 typedef struct FreeNode
 {
     struct FreeNode *prev;
     struct FreeNode *next;
 } FreeNode;
 
+// 상수 정의
 #define ALIGN 16UL
-#define HDR_SIZE (sizeof(Header))
-#define FTR_SIZE (sizeof(Footer))
+#define HDR_SIZE sizeof(Header)
+#define FTR_SIZE sizeof(Footer)
 #define OVERHEAD (HDR_SIZE + FTR_SIZE)
 #define PACK(sz, a) ((sz) | ((a) ? 1UL : 0UL))
 #define GET_SIZE(h) ((h)->size_alloc & ~1UL)
 #define IS_ALLOC(h) ((h)->size_alloc & 1UL)
+#define MIN_FREE sizeof(FreeNode)
+#define MIN_BLOCK ((OVERHEAD + MIN_FREE + (ALIGN - 1)) & ~(ALIGN - 1))
 
-#define MIN_FREE_PAYLOAD sizeof(FreeNode)
-#define MIN_BLOCK_SIZE ((OVERHEAD + MIN_FREE_PAYLOAD + (ALIGN - 1)) & ~(ALIGN - 1))
-
+// 전역 변수
 static char *heap_lo = NULL;
 static char *heap_hi = NULL;
 static FreeNode *free_head = NULL;
 
-static inline size_t align_up(size_t x) { return (x + (ALIGN - 1)) & ~(ALIGN - 1); }
-static inline Footer *hdr_to_ftr(Header *h) { return (Footer *)((char *)h + GET_SIZE(h) - FTR_SIZE); }
-static inline Header *next_phys(Header *h)
+// 정렬 함수
+static size_t align_up(size_t x)
+{
+    return (x + (ALIGN - 1)) & ~(ALIGN - 1);
+}
+
+// 헤더→푸터
+static Footer *hdr_to_ftr(Header *h)
+{
+    return (Footer *)((char *)h + GET_SIZE(h) - FTR_SIZE);
+}
+
+// 다음 블록
+static Header *next_phys(Header *h)
 {
     char *p = (char *)h + GET_SIZE(h);
     if (p >= heap_hi)
@@ -41,7 +55,8 @@ static inline Header *next_phys(Header *h)
     return (Header *)p;
 }
 
-static inline Header *prev_phys(Header *h)
+// 이전 블록
+static Header *prev_phys(Header *h)
 {
     if ((char *)h == heap_lo)
         return NULL;
@@ -50,9 +65,14 @@ static inline Header *prev_phys(Header *h)
     return (Header *)((char *)h - psz);
 }
 
-static inline FreeNode *node_of(Header *h) { return (FreeNode *)((char *)h + HDR_SIZE); }
+// 노드 주소
+static FreeNode *node_of(Header *h)
+{
+    return (FreeNode *)((char *)h + HDR_SIZE);
+}
 
-static void fl_insert_front(Header *h)
+// 빈 블록 리스트 앞에 넣기
+static void fl_insert(Header *h)
 {
     FreeNode *n = node_of(h);
     n->prev = NULL;
@@ -62,6 +82,7 @@ static void fl_insert_front(Header *h)
     free_head = n;
 }
 
+// 리스트에서 제거
 static void fl_remove(Header *h)
 {
     FreeNode *n = node_of(h);
@@ -73,6 +94,7 @@ static void fl_remove(Header *h)
         n->next->prev = n->prev;
 }
 
+// 새 메모리 요청
 static Header *heap_grow(size_t need)
 {
     size_t ask = (need < 64 * 1024 ? 64 * 1024 : need);
@@ -80,21 +102,25 @@ static Header *heap_grow(size_t need)
     void *old = sbrk(ask);
     if (old == (void *)-1)
         return NULL;
+
     if (!heap_lo)
         heap_lo = old;
     heap_hi = (char *)old + ask;
+
     Header *h = (Header *)old;
     h->size_alloc = PACK(ask, 0);
     hdr_to_ftr(h)->size_alloc = h->size_alloc;
-    fl_insert_front(h);
+    fl_insert(h);
     return h;
 }
 
+// 병합
 static Header *coalesce(Header *h)
 {
     Header *p = prev_phys(h);
     Header *n = next_phys(h);
     size_t sz = GET_SIZE(h);
+
     if (p && !IS_ALLOC(p))
     {
         fl_remove(p);
@@ -106,32 +132,41 @@ static Header *coalesce(Header *h)
         fl_remove(n);
         sz += GET_SIZE(n);
     }
+
     h->size_alloc = PACK(sz, 0);
     hdr_to_ftr(h)->size_alloc = h->size_alloc;
     return h;
 }
 
+// 분할
 static Header *split(Header *h, size_t asize)
 {
     size_t csize = GET_SIZE(h);
-    if (csize - asize >= MIN_BLOCK_SIZE)
+    fl_remove(h);
+
+    if (csize - asize >= MIN_BLOCK)
     {
-        fl_remove(h);
         Header *alloc = h;
         Header *remain = (Header *)((char *)h + asize);
+
         alloc->size_alloc = PACK(asize, 1);
         hdr_to_ftr(alloc)->size_alloc = alloc->size_alloc;
+
         remain->size_alloc = PACK(csize - asize, 0);
         hdr_to_ftr(remain)->size_alloc = remain->size_alloc;
-        fl_insert_front(remain);
+        fl_insert(remain);
+
         return alloc;
     }
-    fl_remove(h);
-    h->size_alloc = PACK(csize, 1);
-    hdr_to_ftr(h)->size_alloc = h->size_alloc;
-    return h;
+    else
+    {
+        h->size_alloc = PACK(csize, 1);
+        hdr_to_ftr(h)->size_alloc = h->size_alloc;
+        return h;
+    }
 }
 
+// malloc 함수
 void *heapmgr_malloc(size_t nbytes)
 {
     if (nbytes == 0)
@@ -141,26 +176,27 @@ void *heapmgr_malloc(size_t nbytes)
         void *cur = sbrk(0);
         heap_lo = heap_hi = cur;
     }
+
     size_t asize = align_up(nbytes + OVERHEAD);
-    if (asize < MIN_BLOCK_SIZE)
-        asize = MIN_BLOCK_SIZE;
-    assert(check_heap_validity());
+    if (asize < MIN_BLOCK)
+        asize = MIN_BLOCK;
+
     for (FreeNode *it = free_head; it; it = it->next)
     {
         Header *h = (Header *)((char *)it - HDR_SIZE);
         if (GET_SIZE(h) >= asize)
         {
             Header *a = split(h, asize);
-            assert(check_heap_validity());
             return (char *)a + HDR_SIZE;
         }
     }
+
     Header *newh = heap_grow(asize);
     Header *a = split(newh, asize);
-    assert(check_heap_validity());
     return (char *)a + HDR_SIZE;
 }
 
+// free 함수
 void heapmgr_free(void *ptr)
 {
     if (!ptr)
@@ -168,14 +204,14 @@ void heapmgr_free(void *ptr)
     Header *h = (Header *)((char *)ptr - HDR_SIZE);
     h->size_alloc = PACK(GET_SIZE(h), 0);
     hdr_to_ftr(h)->size_alloc = h->size_alloc;
+
     Header *m = coalesce(h);
-    fl_insert_front(m);
-    assert(check_heap_validity());
+    fl_insert(m);
 }
 
+// 유효성 검사
 int check_heap_validity(void)
 {
-#ifndef NDEBUG
     char *p = heap_lo;
     while (p && p < heap_hi)
     {
@@ -187,6 +223,5 @@ int check_heap_validity(void)
             return 0;
         p += sz;
     }
-#endif
     return 1;
 }
