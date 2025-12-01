@@ -23,16 +23,19 @@ class Layer:
 
 
 class Linear(Layer):
-    # TODO
     def __init__(self, in_features, out_features):
         """
         Args:
             in_features: number of input features
             out_features: number of output features
         """
-        # TODO
-        return
-    
+        std = np.sqrt(2.0 / in_features)
+        self.W = np.random.randn(out_features, in_features) * std
+        self.b = np.zeros(out_features)
+        self.input = None
+        self.grad_W = None
+        self.grad_b = None
+
     def forward(self, input):
         """
         Forward pass: y = xW^T + b
@@ -41,9 +44,10 @@ class Linear(Layer):
         Returns:
             output: (batch_size, out_features)
         """
-        # TODO
-        return
-    
+        self.input = input
+        output = np.dot(input, self.W.T) + self.b
+        return output
+
     def backward(self, grad_output):
         """
         Backward pass
@@ -52,14 +56,15 @@ class Linear(Layer):
         Returns:
             grad_input: (batch_size, in_features)
         """
-        # TODO
-        return
+        grad_input = np.dot(grad_output, self.W)
+        self.grad_W = np.dot(grad_output.T, self.input)
+        self.grad_b = np.sum(grad_output, axis=0)
+        return grad_input
 
 class ReLU(Layer):
     def __init__(self):
-        # TODO
-        return
-    
+        self.input = None
+
     def forward(self, input):
         """
         Forward pass:
@@ -68,9 +73,10 @@ class ReLU(Layer):
         Returns:
             output: same shape as input
         """
-        # TODO
-        return 
-    
+        self.input = input
+        output = np.maximum(0, input)
+        return output
+
     def backward(self, grad_output):
         """
         Backward pass
@@ -79,12 +85,12 @@ class ReLU(Layer):
         Returns:
             grad_input: same shape as input
         """
-        # TODO
-        return 
+        grad_input = grad_output * (self.input > 0)
+        return grad_input 
     
 def softmax(x):
-    # TODO
-    return 
+    exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+    return exp_x / np.sum(exp_x, axis=1, keepdims=True) 
 
 class SimpleNetwork:
     """
@@ -92,21 +98,52 @@ class SimpleNetwork:
     Architecture: Linear -> ReLU -> Linear -> ReLU -> Linear
     """
     def __init__(self, input_size, hidden_size1, hidden_size2, output_size):
-        # TODO
-        pass
-    
+        self.fc1 = Linear(input_size, hidden_size1)
+        self.relu1 = ReLU()
+        self.fc2 = Linear(hidden_size1, hidden_size2)
+        self.relu2 = ReLU()
+        self.fc3 = Linear(hidden_size2, output_size)
+        self.layers = [self.fc1, self.relu1, self.fc2, self.relu2, self.fc3]
+
     def forward(self, x):
-        # TODO
-        return 
-    
+        out = x
+        for layer in self.layers:
+            out = layer.forward(out)
+        return out
+
     def backward(self, grad_output):
-        # TODO
-        return
+        grad = grad_output
+        for layer in reversed(self.layers):
+            grad = layer.backward(grad)
+        return grad
     
     
 def train_with_gd(network, X_train, y_train, learning_rate, num_epochs):
-    # TODO
     losses = []
+    num_samples = X_train.shape[0]
+    num_classes = 10
+
+    for epoch in range(num_epochs):
+        logits = network.forward(X_train)
+        probs = softmax(logits)
+
+        y_one_hot = np.zeros((num_samples, num_classes))
+        y_one_hot[np.arange(num_samples), y_train] = 1
+
+        loss = -np.sum(y_one_hot * np.log(probs + 1e-8)) / num_samples
+        losses.append(loss)
+
+        grad_output = (probs - y_one_hot) / num_samples
+        network.backward(grad_output)
+
+        for layer in network.layers:
+            if isinstance(layer, Linear):
+                layer.W -= learning_rate * layer.grad_W
+                layer.b -= learning_rate * layer.grad_b
+
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}")
+
     return losses
 
 

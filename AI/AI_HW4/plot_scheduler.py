@@ -7,7 +7,18 @@ scheduler_dict = {
         "gamma": 0.1,
         "milestones": [15, 25]
     },
-    # Add your scheduler here
+    "ExponentialDecay": {
+        "gamma": 0.95
+    },
+    "CosineAnnealingLR": {
+        "T_max": 30,
+        "eta_min_ratio": 0.0
+    },
+    "WarmupCosineDecay": {
+        "warmup_epochs": 5,
+        "T_max": 30,
+        "eta_min_ratio": 0.0
+    }
 }
 
 # Initial learning rate
