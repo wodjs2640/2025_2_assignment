@@ -1,7 +1,7 @@
 /*--------------------------------------------------------------------*/
 /* hashtable.c                                                        */
 /* Author: Junghan Yoon, KyoungSoo Park                               */
-/* Modified by: (Your Name)                                           */
+/* Modified by: Jaeun Park                                            */
 /*--------------------------------------------------------------------*/
 #include "hashtable.h"
 /*--------------------------------------------------------------------*/
@@ -117,41 +117,184 @@ int hash_destroy(hashtable_t *table)
 int hash_insert(hashtable_t *table, const char *key, const char *value)
 {
     TRACE_PRINT();
-/*--------------------------------------------------------------------*/
-    /* edit here */
+    /*--------------------------------------------------------------------*/
+    if (!table || !key || !value)
+    {
+        errno = EINVAL;
+        return -1;
+    }
 
-/*--------------------------------------------------------------------*/
+    int idx = hash(key, table->hash_size);
+
+    if (rwlock_write_lock(&table->locks[idx]) != 0)
+    {
+        return -1;
+    }
+
+    // collision 체크
+    node_t *node = table->buckets[idx];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            rwlock_write_unlock(&table->locks[idx]);
+            return 0; // collision
+        }
+        node = node->next;
+    }
+
+    // 새 노드 생성
+    node_t *new_node = malloc(sizeof(node_t));
+    if (!new_node)
+    {
+        rwlock_write_unlock(&table->locks[idx]);
+        return -1;
+    }
+
+    new_node->key = strdup(key);
+    new_node->value = strdup(value);
+    if (!new_node->key || !new_node->value)
+    {
+        free(new_node->key);
+        free(new_node->value);
+        free(new_node);
+        rwlock_write_unlock(&table->locks[idx]);
+        return -1;
+    }
+
+    new_node->key_size = strlen(key);
+    new_node->value_size = strlen(value);
+    new_node->next = table->buckets[idx];
+    table->buckets[idx] = new_node;
+    table->bucket_sizes[idx]++;
+
+    rwlock_write_unlock(&table->locks[idx]);
+    /*--------------------------------------------------------------------*/
     return 1;
 }
 /*--------------------------------------------------------------------*/
 int hash_read(hashtable_t *table, const char *key, char *dst, int quick)
 {
     TRACE_PRINT();
-/*--------------------------------------------------------------------*/
-    /* edit here */
+    /*--------------------------------------------------------------------*/
+    if (!table || !key || !dst)
+    {
+        errno = EINVAL;
+        return -1;
+    }
 
-/*--------------------------------------------------------------------*/
-    return 0;
+    int idx = hash(key, table->hash_size);
+
+    if (rwlock_read_lock(&table->locks[idx], quick) != 0)
+    {
+        return -1;
+    }
+
+    node_t *node = table->buckets[idx];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            strcpy(dst, node->value);
+            rwlock_read_unlock(&table->locks[idx]);
+            return 1; // found
+        }
+        node = node->next;
+    }
+
+    rwlock_read_unlock(&table->locks[idx]);
+    /*--------------------------------------------------------------------*/
+    return 0; // not found
 }
 /*--------------------------------------------------------------------*/
 int hash_update(hashtable_t *table, const char *key, const char *value)
 {
     TRACE_PRINT();
-/*--------------------------------------------------------------------*/
-    /* edit here */
+    /*--------------------------------------------------------------------*/
+    if (!table || !key || !value)
+    {
+        errno = EINVAL;
+        return -1;
+    }
 
-/*--------------------------------------------------------------------*/
-    return 0;
+    int idx = hash(key, table->hash_size);
+
+    if (rwlock_write_lock(&table->locks[idx]) != 0)
+    {
+        return -1;
+    }
+
+    node_t *node = table->buckets[idx];
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            char *new_value = strdup(value);
+            if (!new_value)
+            {
+                rwlock_write_unlock(&table->locks[idx]);
+                return -1;
+            }
+            free(node->value);
+            node->value = new_value;
+            node->value_size = strlen(value);
+            rwlock_write_unlock(&table->locks[idx]);
+            return 1; // updated
+        }
+        node = node->next;
+    }
+
+    rwlock_write_unlock(&table->locks[idx]);
+    /*--------------------------------------------------------------------*/
+    return 0; // not found
 }
 /*--------------------------------------------------------------------*/
 int hash_delete(hashtable_t *table, const char *key)
 {
     TRACE_PRINT();
-/*--------------------------------------------------------------------*/
-    /* edit here */
+    /*--------------------------------------------------------------------*/
+    if (!table || !key)
+    {
+        errno = EINVAL;
+        return -1;
+    }
 
-/*--------------------------------------------------------------------*/
-    return 0;
+    int idx = hash(key, table->hash_size);
+
+    if (rwlock_write_lock(&table->locks[idx]) != 0)
+    {
+        return -1;
+    }
+
+    node_t *node = table->buckets[idx];
+    node_t *prev = NULL;
+
+    while (node)
+    {
+        if (strcmp(node->key, key) == 0)
+        {
+            if (prev)
+            {
+                prev->next = node->next;
+            }
+            else
+            {
+                table->buckets[idx] = node->next;
+            }
+            free(node->key);
+            free(node->value);
+            free(node);
+            table->bucket_sizes[idx]--;
+            rwlock_write_unlock(&table->locks[idx]);
+            return 1; // deleted
+        }
+        prev = node;
+        node = node->next;
+    }
+
+    rwlock_write_unlock(&table->locks[idx]);
+    /*--------------------------------------------------------------------*/
+    return 0; // not found
 }
 /*--------------------------------------------------------------------*/
 /**
