@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(zip -r:*)",
+      "Bash(python -c \"\nimport zipfile\nimport os\n\nzip_name = ''2019-12551_Jaeun_Park.zip''\nfolder_name = ''2019-12551_Jaeun_Park''\n\nwith zipfile.ZipFile(zip_name, ''w'', zipfile.ZIP_DEFLATED) as zipf:\n    for root, dirs, files in os.walk(folder_name):\n        for file in files:\n            file_path = os.path.join(root, file)\n            arcname = os.path.relpath(file_path, ''.'')\n            zipf.write(file_path, arcname)\n            print(f''Added: {arcname}'')\n\nprint(f''\\nCreated: {zip_name}'')\n\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
